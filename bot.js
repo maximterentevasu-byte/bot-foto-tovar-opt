@@ -6,8 +6,7 @@ const { HttpsProxyAgent } = require("https-proxy-agent");
 
 // ===================== SETTINGS ======================
 
-const BOT_TOKEN =
-  process.env.BOT_TOKEN || "PASTE_YOUR_BOT_TOKEN_HERE";
+const BOT_TOKEN = process.env.BOT_TOKEN || "PASTE_YOUR_BOT_TOKEN_HERE";
 
 if (!BOT_TOKEN || BOT_TOKEN === "PASTE_YOUR_BOT_TOKEN_HERE") {
   throw new Error("BOT_TOKEN не задан. Укажи BOT_TOKEN в env.");
@@ -88,9 +87,7 @@ function extractProductsFromResponse(data) {
 
   for (const key of ["items", "data", "results", "products", "content"]) {
     if (Array.isArray(data[key])) {
-      return data[key].map((x) =>
-        x && typeof x === "object" ? x._source || x : x
-      );
+      return data[key].map((x) => (x && typeof x === "object" ? x._source || x : x));
     }
   }
 
@@ -152,31 +149,39 @@ async function fetchProductByArticle(shopCfg, article) {
     size: 10,
   };
 
-  const resp = await axiosInstance.post(shopCfg.catalogUrl, payload, { headers });
+  try {
+    const resp = await axiosInstance.post(shopCfg.catalogUrl, payload, {
+      headers,
+      timeout: 12000,
+    });
 
-  if (resp.status !== 200) {
-    console.warn(`⚠️ ${shopCfg.catalogUrl} вернул ${resp.status} по артикулу ${article}`);
-    return null;
-  }
-
-  const data = resp.data;
-  if (!data || typeof data !== "object") {
-    console.warn(`⚠️ API вернул не JSON по ${article}`);
-    return null;
-  }
-
-  const products = extractProductsFromResponse(data);
-  if (!products.length) return null;
-
-  for (const p of products) {
-    const code = String(p?.code || "").trim();
-    const artn = String(p?.article_number || "").trim();
-    if (code === article || artn === article) {
-      return p;
+    if (resp.status !== 200) {
+      console.warn(`⚠️ ${shopCfg.catalogUrl} вернул ${resp.status} по артикулу ${article}`);
+      return null;
     }
-  }
 
-  return products[0];
+    const data = resp.data;
+    if (!data || typeof data !== "object") {
+      console.warn(`⚠️ API вернул не JSON по ${article}`);
+      return null;
+    }
+
+    const products = extractProductsFromResponse(data);
+    if (!products.length) return null;
+
+    for (const p of products) {
+      const code = String(p?.code || "").trim();
+      const artn = String(p?.article_number || "").trim();
+      if (code === article || artn === article) {
+        return p;
+      }
+    }
+
+    return products[0];
+  } catch (e) {
+    console.warn(`⚠️ Ошибка запроса товара по артикулу ${article}: ${e.message}`);
+    return null;
+  }
 }
 
 function buildCandidateImageUrls(fileEntry) {
@@ -207,6 +212,7 @@ async function downloadImage(shopCfg, url) {
   try {
     const resp = await axiosInstance.get(url, {
       responseType: "arraybuffer",
+      timeout: 12000,
       headers: {
         "user-agent": "Mozilla/5.0",
         accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
@@ -214,13 +220,19 @@ async function downloadImage(shopCfg, url) {
       },
     });
 
-    if (resp.status !== 200) return null;
+    if (resp.status !== 200) {
+      return null;
+    }
 
     const ctype = String(resp.headers["content-type"] || "").toLowerCase();
-    if (ctype.includes("text/html")) return null;
+    if (ctype.includes("text/html")) {
+      return null;
+    }
 
     const content = Buffer.from(resp.data);
-    if (!content || content.length < 50) return null;
+    if (!content || content.length < 50) {
+      return null;
+    }
 
     return content;
   } catch (e) {
@@ -241,7 +253,8 @@ async function makePngThumbnail(imgBuffer, maxW = 220, maxH = 220) {
       })
       .png()
       .toBuffer();
-  } catch {
+  } catch (e) {
+    console.warn(`⚠️ Ошибка обработки картинки: ${e.message}`);
     return null;
   }
 }
@@ -297,13 +310,15 @@ function findHeaderColumnIndex(worksheet, headerName) {
 
 function cellValueToString(value) {
   if (value == null) return "";
+
   if (typeof value === "object") {
     if (value.text) return String(value.text);
-    if (value.richText) {
+    if (Array.isArray(value.richText)) {
       return value.richText.map((x) => x.text || "").join("");
     }
     if (value.result != null) return String(value.result);
   }
+
   return String(value);
 }
 
@@ -328,29 +343,35 @@ async function processExcelBuffer(excelBuffer, shopKey) {
   worksheet.getColumn(photoCol).width = 35;
 
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
-    const artRaw = worksheet.getCell(rowNumber, articleCol).value;
-    const artVal = normalizeArticle(cellValueToString(artRaw));
+    try {
+      const artRaw = worksheet.getCell(rowNumber, articleCol).value;
+      const artVal = normalizeArticle(cellValueToString(artRaw));
 
-    if (!artVal) continue;
+      if (!artVal) continue;
 
-    const { imageBuffer, triedUrl } = await getImageForArticle(shopCfg, artVal);
+      console.log(`Обработка строки ${rowNumber}, артикул: ${artVal}`);
 
-    if (imageBuffer) {
-      const imageId = workbook.addImage({
-        buffer: imageBuffer,
-        extension: "png",
-      });
+      const { imageBuffer, triedUrl } = await getImageForArticle(shopCfg, artVal);
 
-      worksheet.getRow(rowNumber).height = 95;
+      if (imageBuffer) {
+        const imageId = workbook.addImage({
+          buffer: imageBuffer,
+          extension: "png",
+        });
 
-      worksheet.addImage(imageId, {
-        tl: { col: photoCol - 1 + 0.1, row: rowNumber - 1 + 0.1 },
-        ext: { width: 160, height: 120 },
-        editAs: "oneCell",
-      });
-    } else {
-      worksheet.getCell(rowNumber, photoCol).value =
-        triedUrl || `NO_IMAGE:${artVal}`;
+        worksheet.getRow(rowNumber).height = 95;
+
+        worksheet.addImage(imageId, {
+          tl: { col: photoCol - 1 + 0.1, row: rowNumber - 1 + 0.1 },
+          ext: { width: 160, height: 120 },
+          editAs: "oneCell",
+        });
+      } else {
+        worksheet.getCell(rowNumber, photoCol).value = triedUrl || `NO_IMAGE:${artVal}`;
+      }
+    } catch (rowError) {
+      console.warn(`⚠️ Ошибка на строке ${rowNumber}: ${rowError.message}`);
+      worksheet.getCell(rowNumber, photoCol).value = `ERROR:${rowError.message}`;
     }
   }
 
@@ -368,7 +389,15 @@ const botOptions = TG_PROXY
     }
   : {};
 
-const bot = new Telegraf(BOT_TOKEN, botOptions);
+const bot = new Telegraf(BOT_TOKEN, {
+  ...botOptions,
+  handlerTimeout: 600000,
+});
+
+bot.catch((err, ctx) => {
+  console.error("Unhandled error while processing", ctx.update);
+  console.error(err);
+});
 
 bot.start(async () => {
   // игнорируем /start как в оригинале
@@ -411,6 +440,7 @@ bot.on("document", async (ctx) => {
     const fileLink = await ctx.telegram.getFileLink(doc.file_id);
     const fileResp = await axiosInstance.get(fileLink.href, {
       responseType: "arraybuffer",
+      timeout: 30000,
     });
 
     const excelBuffer = Buffer.from(fileResp.data);
