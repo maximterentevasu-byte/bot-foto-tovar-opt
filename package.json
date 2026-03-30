@@ -1,0 +1,29 @@
+{
+  "name": "telegram-excel-image-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot on Node.js that processes Excel files and inserts product images by article",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "telegraf",
+    "excel",
+    "exceljs",
+    "sharp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "exceljs": "^4.4.0",
+    "https-proxy-agent": "^7.0.6",
+    "sharp": "^0.33.5",
+    "telegraf": "^4.16.3"
+  }
+}
